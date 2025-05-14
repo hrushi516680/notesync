@@ -1,4 +1,5 @@
 #COMMENT FOR TRIAL
+#hello this is mafe by somya
 from utils.recorder import record_lecture
 from utils.drive_upload import upload_to_drive
 from utils.whatsapp import send_whatsapp_summary
