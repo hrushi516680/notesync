@@ -1,7 +1,7 @@
 | Feature               | 
 Library                                      |
 
-| --------------------- -------------------------------------------- |
+|----------------------------------------------------------------- |
 
 | YouTube download      | `pytube`, `youtube_transcript_api`           |
 
@@ -22,16 +22,28 @@ Library                                      |
 
 
 
-youtube_analyzer/
+youtube_analyzer/ 
+
 ├── main.py
+
 ├── downloader.py
+
 ├── transcript.py
+
 ├── summarizer.py
+
 ├── board_scanner.py
+
 ├── pdf_generator.py
+
 ├── whatsapp_sender.py
+
 ├── utils/
+
 │   ├── video_utils.py
+
 │   └── image_utils.py
+
 ├── requirements.txt
+
 └── README.md
