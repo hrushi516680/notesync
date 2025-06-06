@@ -977,7 +977,7 @@ class VoiceActivatedLectureRecorder:
 def main():
     """Main entry point with configuration options"""
     try:
-        print("🎬 Initializing Enhanced Voice + Keyboard Lecture Recorder...")
+        print("🎬 Initializing Enhanced Voice + board Lecture Recorder...")
         
         # Create and configure recorder
         recorder = VoiceActivatedLectureRecorder()
