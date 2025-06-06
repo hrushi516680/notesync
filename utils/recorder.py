@@ -99,7 +99,7 @@ class VoiceActivatedLectureRecorder:
             ]
         )
         self.logger = logging.getLogger(__name__)
-        self.logger.info("🚀 Enhanced Voice + Keyboard Recorder initialized")
+        self.logger.info(" Enhanced Voice + Keyboard Recorder initialized")
 
     def _setup_keyboard_shortcuts(self):
         """NEW: Setup keyboard shortcuts and hotkeys"""
@@ -118,23 +118,23 @@ class VoiceActivatedLectureRecorder:
             keyboard.add_hotkey('p', self._keyboard_toggle_pause_simple)
             keyboard.add_hotkey('q', self._keyboard_quit_simple)
             
-            self.logger.info("⌨️ Keyboard shortcuts initialized")
+            self.logger.info("Keyboard shortcuts initialized")
             self._print_keyboard_shortcuts()
             
         except Exception as e:
-            self.logger.error(f"❌ Keyboard shortcut setup failed: {e}")
+            self.logger.error(f"Keyboard shortcut setup failed: {e}")
             self.keyboard_shortcuts_enabled = False
 
     def _print_keyboard_shortcuts(self):
         """Print available keyboard shortcuts"""
-        print("\n⌨️ KEYBOARD SHORTCUTS:")
+        print("\nKEYBOARD SHORTCUTS:")
         print("=" * 50)
-        print("🌐 GLOBAL SHORTCUTS (work anywhere):")
+        print("   GLOBAL SHORTCUTS (work anywhere):")
         print("   Ctrl+Shift+R  → Start/Stop Recording")
         print("   Ctrl+Shift+P  → Pause/Resume Recording")
         print("   Ctrl+Shift+Q  → Quit Application")
         print("   Space (hold)  → Push-to-Talk Mode")
-        print("\n🎯 APP SHORTCUTS (when terminal is active):")
+        print("\n APP SHORTCUTS (when terminal is active):")
         print("   R            → Start/Stop Recording")
         print("   P            → Pause/Resume Recording")
         print("   Q            → Quit Application")
@@ -145,37 +145,37 @@ class VoiceActivatedLectureRecorder:
         """Handle Ctrl+Shift+R - Toggle recording"""
         try:
             if not self.is_recording:
-                print("⌨️🔴 Starting recording via keyboard...")
-                self.logger.info("🎬 Recording started via keyboard shortcut")
+                print("Starting recording via keyboard...")
+                self.logger.info("Recording started via keyboard shortcut")
                 self.start_recording()
             else:
-                print("⌨️⏹️ Stopping recording via keyboard...")
-                self.logger.info("🛑 Recording stopped via keyboard shortcut")
+                print(" Stopping recording via keyboard...")
+                self.logger.info(" Recording stopped via keyboard shortcut")
                 self.stop_recording()
         except Exception as e:
-            self.logger.error(f"❌ Keyboard recording toggle failed: {e}")
+            self.logger.error(f" Keyboard recording toggle failed: {e}")
 
     def _keyboard_toggle_pause(self):
         """Handle Ctrl+Shift+P - Toggle pause"""
         try:
             if self.is_recording:
                 if not self.is_paused:
-                    print("⌨️⏸️ Pausing recording via keyboard...")
-                    self.logger.info("⏸️ Recording paused via keyboard shortcut")
+                    print(" Pausing recording via keyboard...")
+                    self.logger.info(" Recording paused via keyboard shortcut")
                     self.pause_recording()
                 else:
-                    print("⌨️▶️ Resuming recording via keyboard...")
+                    print(" Resuming recording via keyboard...")
                     self.logger.info("▶️ Recording resumed via keyboard shortcut")
                     self.resume_recording()
             else:
-                print("⚠️ No active recording to pause/resume")
+                print("No active recording to pause/resume")
         except Exception as e:
-            self.logger.error(f"❌ Keyboard pause toggle failed: {e}")
+            self.logger.error(f" Keyboard pause toggle failed: {e}")
 
     def _keyboard_quit(self):
         """Handle Ctrl+Shift+Q - Quit application"""
-        print("⌨️👋 Quitting application via keyboard...")
-        self.logger.info("🛑 Application quit via keyboard shortcut")
+        print("Quitting application via keyboard...")
+        self.logger.info("Application quit via keyboard shortcut")
         self.cleanup()
         sys.exit(0)
 
