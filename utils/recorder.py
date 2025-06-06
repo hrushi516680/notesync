@@ -17,13 +17,24 @@ from typing import Optional, Tuple, List
 import platform
 import subprocess
 
+# NEW IMPORTS FOR KEYBOARD CONTROL
+import keyboard
+import signal
+import sys
+
 class VoiceActivatedLectureRecorder:
     def __init__(self):
         # Core state
         self.is_recording = False
+        self.is_paused = False  # NEW: Pause functionality
         self.is_listening = True
         self.video_writer = None
         self.audio_frames = []
+        
+        # NEW: Control modes
+        self.control_mode = "both"  # "voice", "keyboard", "both"
+        self.push_to_talk_active = False
+        self.keyboard_shortcuts_enabled = True
         
         # Recognition components
         self.recognizer = sr.Recognizer()
@@ -41,6 +52,7 @@ class VoiceActivatedLectureRecorder:
         self.video_thread = None
         self.audio_thread = None
         self.command_thread = None
+        self.keyboard_thread = None  # NEW: Keyboard listener thread
         self.stop_event = threading.Event()
         
         # File paths
@@ -51,10 +63,14 @@ class VoiceActivatedLectureRecorder:
         # Performance monitoring
         self.frame_count = 0
         self.start_time = None
+        self.pause_start_time = None
+        self.total_pause_duration = 0
         
         # Command recognition improvement
         self.start_commands = ['start', 'begin', 'record', 'go']
         self.stop_commands = ['stop', 'end', 'finish', 'halt']
+        self.pause_commands = ['pause', 'hold', 'wait']  # NEW
+        self.resume_commands = ['resume', 'continue', 'unpause']  # NEW
         self.command_confidence_threshold = 0.7
         
         # Setup logging
@@ -62,6 +78,9 @@ class VoiceActivatedLectureRecorder:
         
         # Initialize components
         self._initialize_components()
+        
+        # NEW: Setup keyboard shortcuts
+        self._setup_keyboard_shortcuts()
 
     def _setup_logging(self):
         """Setup comprehensive logging system"""
@@ -80,7 +99,216 @@ class VoiceActivatedLectureRecorder:
             ]
         )
         self.logger = logging.getLogger(__name__)
-        self.logger.info("🚀 Voice-Activated Lecture Recorder initialized")
+        self.logger.info("🚀 Enhanced Voice + Keyboard Recorder initialized")
+
+    def _setup_keyboard_shortcuts(self):
+        """NEW: Setup keyboard shortcuts and hotkeys"""
+        try:
+            # Global hotkeys (work even when app isn't focused)
+            keyboard.add_hotkey('ctrl+shift+r', self._keyboard_toggle_recording)
+            keyboard.add_hotkey('ctrl+shift+p', self._keyboard_toggle_pause)
+            keyboard.add_hotkey('ctrl+shift+q', self._keyboard_quit)
+            
+            # Push-to-talk functionality
+            keyboard.on_press_key('space', self._on_space_press)
+            keyboard.on_release_key('space', self._on_space_release)
+            
+            # App-focused shortcuts (when terminal/app is active)
+            keyboard.add_hotkey('r', self._keyboard_toggle_recording_simple)
+            keyboard.add_hotkey('p', self._keyboard_toggle_pause_simple)
+            keyboard.add_hotkey('q', self._keyboard_quit_simple)
+            
+            self.logger.info("⌨️ Keyboard shortcuts initialized")
+            self._print_keyboard_shortcuts()
+            
+        except Exception as e:
+            self.logger.error(f"❌ Keyboard shortcut setup failed: {e}")
+            self.keyboard_shortcuts_enabled = False
+
+    def _print_keyboard_shortcuts(self):
+        """Print available keyboard shortcuts"""
+        print("\n⌨️ KEYBOARD SHORTCUTS:")
+        print("=" * 50)
+        print("🌐 GLOBAL SHORTCUTS (work anywhere):")
+        print("   Ctrl+Shift+R  → Start/Stop Recording")
+        print("   Ctrl+Shift+P  → Pause/Resume Recording")
+        print("   Ctrl+Shift+Q  → Quit Application")
+        print("   Space (hold)  → Push-to-Talk Mode")
+        print("\n🎯 APP SHORTCUTS (when terminal is active):")
+        print("   R            → Start/Stop Recording")
+        print("   P            → Pause/Resume Recording")
+        print("   Q            → Quit Application")
+        print("=" * 50)
+
+    # NEW: Keyboard event handlers
+    def _keyboard_toggle_recording(self):
+        """Handle Ctrl+Shift+R - Toggle recording"""
+        try:
+            if not self.is_recording:
+                print("⌨️🔴 Starting recording via keyboard...")
+                self.logger.info("🎬 Recording started via keyboard shortcut")
+                self.start_recording()
+            else:
+                print("⌨️⏹️ Stopping recording via keyboard...")
+                self.logger.info("🛑 Recording stopped via keyboard shortcut")
+                self.stop_recording()
+        except Exception as e:
+            self.logger.error(f"❌ Keyboard recording toggle failed: {e}")
+
+    def _keyboard_toggle_pause(self):
+        """Handle Ctrl+Shift+P - Toggle pause"""
+        try:
+            if self.is_recording:
+                if not self.is_paused:
+                    print("⌨️⏸️ Pausing recording via keyboard...")
+                    self.logger.info("⏸️ Recording paused via keyboard shortcut")
+                    self.pause_recording()
+                else:
+                    print("⌨️▶️ Resuming recording via keyboard...")
+                    self.logger.info("▶️ Recording resumed via keyboard shortcut")
+                    self.resume_recording()
+            else:
+                print("⚠️ No active recording to pause/resume")
+        except Exception as e:
+            self.logger.error(f"❌ Keyboard pause toggle failed: {e}")
+
+    def _keyboard_quit(self):
+        """Handle Ctrl+Shift+Q - Quit application"""
+        print("⌨️👋 Quitting application via keyboard...")
+        self.logger.info("🛑 Application quit via keyboard shortcut")
+        self.cleanup()
+        sys.exit(0)
+
+    # Simple shortcuts (without modifiers)
+    def _keyboard_toggle_recording_simple(self):
+        """Handle R key - Simple recording toggle"""
+        if not keyboard.is_pressed('ctrl') and not keyboard.is_pressed('shift'):
+            self._keyboard_toggle_recording()
+
+    def _keyboard_toggle_pause_simple(self):
+        """Handle P key - Simple pause toggle"""
+        if not keyboard.is_pressed('ctrl') and not keyboard.is_pressed('shift'):
+            self._keyboard_toggle_pause()
+
+    def _keyboard_quit_simple(self):
+        """Handle Q key - Simple quit"""
+        if not keyboard.is_pressed('ctrl') and not keyboard.is_pressed('shift'):
+            self._keyboard_quit()
+
+    # Push-to-talk functionality
+    def _on_space_press(self, event):
+        """Handle space key press - Start push-to-talk"""
+        if not self.push_to_talk_active and not self.is_recording:
+            self.push_to_talk_active = True
+            print("🎤 Push-to-talk activated...")
+            self.logger.info("🎤 Push-to-talk started")
+            # Start temporary recording
+            self._start_push_to_talk()
+
+    def _on_space_release(self, event):
+        """Handle space key release - End push-to-talk"""
+        if self.push_to_talk_active:
+            self.push_to_talk_active = False
+            print("🎤 Push-to-talk deactivated")
+            self.logger.info("🎤 Push-to-talk ended")
+            # Process the push-to-talk audio for commands
+            self._process_push_to_talk()
+
+    def _start_push_to_talk(self):
+        """Start temporary recording for push-to-talk"""
+        try:
+            self.push_to_talk_frames = []
+            self.push_to_talk_recording = True
+            
+            # Start brief audio capture for command recognition
+            threading.Thread(target=self._capture_push_to_talk_audio, daemon=True).start()
+        except Exception as e:
+            self.logger.error(f"❌ Push-to-talk start failed: {e}")
+
+    def _capture_push_to_talk_audio(self):
+        """Capture audio during push-to-talk"""
+        try:
+            with self._audio_stream_context() as stream:
+                while self.push_to_talk_active:
+                    data = stream.read(self.chunk, exception_on_overflow=False)
+                    if hasattr(self, 'push_to_talk_frames'):
+                        self.push_to_talk_frames.append(data)
+                    time.sleep(0.01)
+        except Exception as e:
+            self.logger.error(f"❌ Push-to-talk audio capture failed: {e}")
+
+    def _process_push_to_talk(self):
+        """Process audio captured during push-to-talk"""
+        try:
+            if not hasattr(self, 'push_to_talk_frames') or not self.push_to_talk_frames:
+                return
+                
+            # Create temporary audio file
+            temp_audio_path = "temp_push_to_talk.wav"
+            with wave.open(temp_audio_path, 'wb') as wf:
+                wf.setnchannels(self.channels)
+                wf.setsampwidth(self.audio.get_sample_size(self.audio_format))
+                wf.setframerate(self.rate)
+                wf.writeframes(b''.join(self.push_to_talk_frames))
+            
+            # Recognize speech from push-to-talk audio
+            with sr.AudioFile(temp_audio_path) as source:
+                audio = self.recognizer.record(source)
+                command = self.recognizer.recognize_google(audio).lower()
+                print(f"🎤 Push-to-talk command: {command}")
+                
+                # Process the command
+                self._process_voice_command(command)
+                
+            # Clean up temporary file
+            if os.path.exists(temp_audio_path):
+                os.remove(temp_audio_path)
+                
+        except sr.UnknownValueError:
+            print("🎤 Push-to-talk: Could not understand audio")
+        except Exception as e:
+            self.logger.error(f"❌ Push-to-talk processing failed: {e}")
+        finally:
+            if hasattr(self, 'push_to_talk_frames'):
+                delattr(self, 'push_to_talk_frames')
+
+    def _process_voice_command(self, command: str):
+        """Process a recognized voice command"""
+        try:
+            if self._is_start_command(command) and not self.is_recording:
+                print("🔊 Starting recording via voice...")
+                self.start_recording()
+            elif self._is_stop_command(command) and self.is_recording:
+                print("🔊 Stopping recording via voice...")
+                self.stop_recording()
+            elif self._is_pause_command(command) and self.is_recording and not self.is_paused:
+                print("🔊 Pausing recording via voice...")
+                self.pause_recording()
+            elif self._is_resume_command(command) and self.is_recording and self.is_paused:
+                print("🔊 Resuming recording via voice...")
+                self.resume_recording()
+        except Exception as e:
+            self.logger.error(f"❌ Voice command processing failed: {e}")
+
+    # NEW: Pause/Resume functionality
+    def pause_recording(self):
+        """Pause the current recording"""
+        if self.is_recording and not self.is_paused:
+            self.is_paused = True
+            self.pause_start_time = time.time()
+            print("⏸️ Recording paused")
+            self.logger.info("⏸️ Recording paused")
+
+    def resume_recording(self):
+        """Resume the paused recording"""
+        if self.is_recording and self.is_paused:
+            self.is_paused = False
+            if self.pause_start_time:
+                pause_duration = time.time() - self.pause_start_time
+                self.total_pause_duration += pause_duration
+                self.pause_start_time = None
+            print("▶️ Recording resumed")
+            self.logger.info("▶️ Recording resumed")
 
     def _initialize_components(self):
         """Initialize all components with proper error handling"""
@@ -219,51 +447,63 @@ class VoiceActivatedLectureRecorder:
         normalized = self._normalize_command(command)
         return any(stop_cmd in normalized for stop_cmd in self.stop_commands)
 
+    def _is_pause_command(self, command: str) -> bool:
+        """NEW: Check if command is a pause command"""
+        normalized = self._normalize_command(command)
+        return any(pause_cmd in normalized for pause_cmd in self.pause_commands)
+
+    def _is_resume_command(self, command: str) -> bool:
+        """NEW: Check if command is a resume command"""
+        normalized = self._normalize_command(command)
+        return any(resume_cmd in normalized for resume_cmd in self.resume_commands)
+
     def listen_for_commands(self):
         """Enhanced command listening with better error handling"""
-        print("🎤 Say 'start' to begin recording and 'stop' to end.")
-        print("💡 Commands: start/begin/record/go | stop/end/finish/halt")
+        if self.control_mode in ["voice", "both"]:
+            print("🎤 Voice commands enabled:")
+            print("   ▶️  Start: 'start', 'begin', 'record', 'go'")
+            print("   ⏸️  Pause: 'pause', 'hold', 'wait'")
+            print("   ▶️  Resume: 'resume', 'continue', 'unpause'")
+            print("   ⏹️  Stop: 'stop', 'end', 'finish', 'halt'")
         
         # Calibrate microphone for ambient noise
-        try:
-            with self.microphone as source:
-                print("🔧 Calibrating microphone for ambient noise...")
-                self.recognizer.adjust_for_ambient_noise(source, duration=2)
-                print("✅ Microphone calibrated")
-        except Exception as e:
-            self.logger.warning(f"⚠️ Microphone calibration failed: {e}")
+        if self.control_mode in ["voice", "both"]:
+            try:
+                with self.microphone as source:
+                    print("🔧 Calibrating microphone for ambient noise...")
+                    self.recognizer.adjust_for_ambient_noise(source, duration=2)
+                    print("✅ Microphone calibrated")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Microphone calibration failed: {e}")
 
         consecutive_errors = 0
         max_consecutive_errors = 5
 
         while self.is_listening and not self.stop_event.is_set():
             try:
-                with self.microphone as source:
-                    # Listen with timeout to allow for graceful shutdown
-                    audio = self.recognizer.listen(
-                        source, 
-                        timeout=1, 
-                        phrase_time_limit=5
-                    )
-                
-                # Recognize speech with confidence scoring when possible
-                command = self.recognizer.recognize_google(audio).lower()
-                self.logger.info(f"🔊 Command heard: '{command}'")
-                print(f"🔊 Heard: {command}")
-
-                # Process commands
-                if self._is_start_command(command) and not self.is_recording:
-                    print("▶️ Starting recording...")
-                    self.logger.info("🎬 Recording started via voice command")
-                    self.start_recording()
+                # Only listen for voice commands if voice control is enabled
+                if self.control_mode in ["voice", "both"]:
+                    with self.microphone as source:
+                        # Listen with timeout to allow for graceful shutdown
+                        audio = self.recognizer.listen(
+                            source, 
+                            timeout=1, 
+                            phrase_time_limit=5
+                        )
                     
-                elif self._is_stop_command(command) and self.is_recording:
-                    print("⏹️ Stopping recording...")
-                    self.logger.info("🛑 Recording stopped via voice command")
-                    return self.stop_recording()
+                    # Recognize speech with confidence scoring when possible
+                    command = self.recognizer.recognize_google(audio).lower()
+                    self.logger.info(f"🔊 Command heard: '{command}'")
+                    print(f"🔊 Heard: {command}")
 
-                # Reset error counter on successful recognition
-                consecutive_errors = 0
+                    # Process commands using the centralized processor
+                    self._process_voice_command(command)
+
+                    # Reset error counter on successful recognition
+                    consecutive_errors = 0
+                else:
+                    # If only keyboard mode, just wait
+                    time.sleep(0.1)
 
             except sr.WaitTimeoutError:
                 # This is expected, just continue listening
@@ -296,6 +536,8 @@ class VoiceActivatedLectureRecorder:
         """Enhanced recording start with comprehensive error handling"""
         try:
             self.is_recording = True
+            self.is_paused = False  # Reset pause state
+            self.total_pause_duration = 0  # Reset pause duration
             self.stop_event.clear()
             self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.start_time = time.time()
@@ -346,9 +588,13 @@ class VoiceActivatedLectureRecorder:
             raise
 
     def record_video(self):
-        """Enhanced video recording with performance monitoring"""
+        """Enhanced video recording with performance monitoring and pause support"""
         try:
             while self.is_recording and not self.stop_event.is_set():
+                if self.is_paused:
+                    time.sleep(0.1)  # Wait during pause
+                    continue
+                    
                 ret, frame = self.cap.read()
                 if not ret:
                     self.logger.warning("⚠️ Failed to read frame from camera")
@@ -356,23 +602,36 @@ class VoiceActivatedLectureRecorder:
 
                 # Add enhanced recording indicator
                 current_time = time.time() - self.start_time if self.start_time else 0
-                time_str = f"{int(current_time // 60):02d}:{int(current_time % 60):02d}"
+                # Subtract pause time for accurate recording duration
+                actual_recording_time = current_time - self.total_pause_duration
+                time_str = f"{int(actual_recording_time // 60):02d}:{int(actual_recording_time % 60):02d}"
                 
                 # Add recording status overlay
-                cv2.putText(frame, "🔴 RECORDING", (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                if self.is_paused:
+                    cv2.putText(frame, "⏸️ PAUSED", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                else:
+                    cv2.putText(frame, "🔴 RECORDING", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                
                 cv2.putText(frame, f"Time: {time_str}", (10, 70),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
-                # Write frame
-                self.video_writer.write(frame)
-                self.frame_count += 1
+                # Add control hints
+                cv2.putText(frame, "Ctrl+Shift+P: Pause | Ctrl+Shift+R: Stop", (10, frame.shape[0] - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                
+                # Write frame only if not paused
+                if not self.is_paused:
+                    self.video_writer.write(frame)
+                    self.frame_count += 1
                 
                 # Display frame
                 cv2.imshow('Recording', frame)
                 
                 # Check for quit key
-                if cv2.waitKey(1) & 0xFF == ord('q'):
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
                     self.logger.info("📺 Video recording stopped by user (Q key)")
                     break
 
@@ -382,13 +641,17 @@ class VoiceActivatedLectureRecorder:
             self._cleanup_video_resources()
 
     def record_audio(self):
-        """Enhanced audio recording with better error handling"""
+        """Enhanced audio recording with better error handling and pause support"""
         try:
             with self._audio_stream_context() as stream:
                 self.audio_stream = stream
                 
                 while self.is_recording and not self.stop_event.is_set():
                     try:
+                        if self.is_paused:
+                            time.sleep(0.1)  # Wait during pause
+                            continue
+                            
                         data = stream.read(self.chunk, exception_on_overflow=False)
                         self.audio_frames.append(data)
                     except Exception as e:
@@ -403,6 +666,7 @@ class VoiceActivatedLectureRecorder:
         try:
             self.logger.info("🛑 Stopping recording...")
             self.is_recording = False
+            self.is_paused = False
             self.stop_event.set()
 
             # Wait for threads to complete with timeout
@@ -420,29 +684,31 @@ class VoiceActivatedLectureRecorder:
             self._save_audio_file()
 
             # Calculate recording statistics
-            duration = time.time() - self.start_time if self.start_time else 0
-            avg_fps = self.frame_count / duration if duration > 0 else 0
+            total_duration = time.time() - self.start_time if self.start_time else 0
+            actual_recording_duration = total_duration - self.total_pause_duration
+            avg_fps = self.frame_count / actual_recording_duration if actual_recording_duration > 0 else 0
 
             print("✅ Recording saved successfully!")
             print(f"📹 Video: {self.video_path}")
             print(f"🎵 Audio: {self.audio_path}")
-            print(f"⏱️ Duration: {duration:.1f}s | Frames: {self.frame_count} | Avg FPS: {avg_fps:.1f}")
+            print(f"⏱️ Total Duration: {total_duration:.1f}s | Recording Duration: {actual_recording_duration:.1f}s")
+            print(f"⏸️ Pause Time: {self.total_pause_duration:.1f}s | Frames: {self.frame_count} | Avg FPS: {avg_fps:.1f}")
 
-            self.logger.info(f"📊 Recording stats - Duration: {duration:.1f}s, Frames: {self.frame_count}, Avg FPS: {avg_fps:.1f}")
+            self.logger.info(f"📊 Recording stats - Total: {total_duration:.1f}s, Recording: {actual_recording_duration:.1f}s, Pause: {self.total_pause_duration:.1f}s, Frames: {self.frame_count}, Avg FPS: {avg_fps:.1f}")
 
             # Process recording (transcription, keywords, highlights)
             transcript = self.transcribe_audio()
             keywords = self.extract_keywords(transcript)
-            highlights = self.find_highlight(transcript)
+            highlights = self.find_highlights(transcript)
 
             # Save metadata
-            self._save_metadata(transcript, keywords, highlights, duration)
+            self._save_metadata(transcript, keywords, highlights, actual_recording_duration)
 
             # Display results
             print("\n📝 Transcript:")
             print(transcript)
             print(f"\n🔑 Keywords: {', '.join(keywords)}")
-            print(f"⭐ Highlight: {highlights}")
+            print(f"⭐ Highlights: {highlights}")
 
             return self.video_path, transcript, keywords, highlights
 
@@ -464,53 +730,52 @@ class VoiceActivatedLectureRecorder:
                 wf.setsampwidth(self.audio.get_sample_size(self.audio_format))
                 wf.setframerate(self.rate)
                 wf.writeframes(b''.join(self.audio_frames))
-
-            # Verify file was created and has content
-            if os.path.exists(self.audio_path) and os.path.getsize(self.audio_path) > 0:
-                self.logger.info(f"💾 Audio saved: {self.audio_path}")
-            else:
-                self.logger.error("❌ Audio file was not saved properly")
-
+            
+            self.logger.info(f"🎵 Audio saved: {self.audio_path}")
+            
         except Exception as e:
-            self.logger.error(f"❌ Failed to save audio file: {e}")
+            self.logger.error(f"❌ Failed to save audio: {e}")
+            raise
 
-    def _save_metadata(self, transcript: str, keywords: List[str], highlights: str, duration: float):
+    def _save_metadata(self, transcript: str, keywords: list, highlights: list, duration: float):
         """Save recording metadata to JSON file"""
         try:
             metadata = {
                 'timestamp': self.timestamp,
-                'duration': duration,
-                'frame_count': self.frame_count,
                 'video_path': self.video_path,
                 'audio_path': self.audio_path,
+                'duration': duration,
+                'total_pause_duration': self.total_pause_duration,
+                'frame_count': self.frame_count,
                 'transcript': transcript,
                 'keywords': keywords,
                 'highlights': highlights,
-                'created_at': datetime.now().isoformat()
+                'recording_date': datetime.now().isoformat()
             }
-
-            metadata_path = f"recordings/lecture_{self.timestamp}_metadata.json"
+            
+            metadata_path = f"recordings/metadata_{self.timestamp}.json"
             with open(metadata_path, 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, indent=2, ensure_ascii=False)
-
+            
             self.logger.info(f"📄 Metadata saved: {metadata_path}")
-
+            
         except Exception as e:
             self.logger.error(f"❌ Failed to save metadata: {e}")
 
     def _cleanup_video_resources(self):
-        """Cleanup video-related resources"""
+        """Clean up video recording resources"""
         try:
             if hasattr(self, 'cap') and self.cap:
                 self.cap.release()
             if hasattr(self, 'video_writer') and self.video_writer:
                 self.video_writer.release()
             cv2.destroyAllWindows()
+            self.logger.info("📹 Video resources cleaned up")
         except Exception as e:
-            self.logger.error(f"❌ Error cleaning up video resources: {e}")
+            self.logger.error(f"❌ Video cleanup error: {e}")
 
     def _cleanup_recording_resources(self):
-        """Cleanup all recording-related resources"""
+        """Clean up all recording resources"""
         try:
             self._cleanup_video_resources()
             
@@ -520,277 +785,219 @@ class VoiceActivatedLectureRecorder:
                     self.audio_stream.close()
                 except:
                     pass
-                    
+            
+            self.logger.info("🧹 All recording resources cleaned up")
+            
         except Exception as e:
-            self.logger.error(f"❌ Error cleaning up recording resources: {e}")
+            self.logger.error(f"❌ Resource cleanup error: {e}")
 
-    def transcribe_audio(self):
-        """Enhanced audio transcription with better error handling"""
-        print("🧠 Transcribing audio...")
-        self.logger.info("🔤 Starting audio transcription")
-        
+    def transcribe_audio(self) -> str:
+        """Transcribe the recorded audio with enhanced error handling"""
         try:
             if not os.path.exists(self.audio_path):
-                error_msg = "Audio file not found for transcription"
-                self.logger.error(f"❌ {error_msg}")
-                return f"❌ {error_msg}"
+                self.logger.warning("⚠️ Audio file not found for transcription")
+                return "Transcription unavailable - audio file not found"
 
-            # Check file size
-            file_size = os.path.getsize(self.audio_path)
-            if file_size == 0:
-                error_msg = "Audio file is empty"
-                self.logger.error(f"❌ {error_msg}")
-                return f"❌ {error_msg}"
-
-            self.logger.info(f"📊 Audio file size: {file_size / 1024 / 1024:.2f} MB")
-
-            # Transcribe with enhanced settings
+            print("🔄 Transcribing audio...")
+            
             with sr.AudioFile(self.audio_path) as source:
-                # Adjust for noise if needed
-                self.recognizer.adjust_for_ambient_noise(source, duration=1)
+                # Adjust for ambient noise
+                self.recognizer.adjust_for_ambient_noise(source, duration=1.0)
                 audio = self.recognizer.record(source)
-
-            # Attempt transcription with Google Speech Recognition
-            text = self.recognizer.recognize_google(
-                audio, 
-                language='en-US',
-                show_all=False
-            )
-
-            self.logger.info("✅ Transcription completed successfully")
-            return text
-
+            
+            # Use Google Speech Recognition
+            transcript = self.recognizer.recognize_google(audio)
+            self.logger.info("📝 Audio transcription completed")
+            return transcript
+            
         except sr.UnknownValueError:
-            error_msg = "Could not understand audio content"
-            self.logger.warning(f"⚠️ {error_msg}")
-            return f"⚠️ {error_msg}"
-            
+            self.logger.warning("⚠️ Could not understand audio for transcription")
+            return "Transcription unavailable - audio not clear enough"
         except sr.RequestError as e:
-            error_msg = f"Speech recognition service error: {e}"
-            self.logger.error(f"❌ {error_msg}")
-            return f"❌ {error_msg}"
-            
-        except FileNotFoundError:
-            error_msg = "Audio file not found"
-            self.logger.error(f"❌ {error_msg}")
-            return f"❌ {error_msg}"
-            
+            self.logger.error(f"❌ Transcription service error: {e}")
+            return f"Transcription error: {e}"
         except Exception as e:
-            error_msg = f"Transcription failed: {e}"
-            self.logger.error(f"❌ {error_msg}")
-            return f"❌ {error_msg}"
+            self.logger.error(f"❌ Transcription failed: {e}")
+            return f"Transcription failed: {e}"
 
-    def extract_keywords(self, text: str) -> List[str]:
-        """Enhanced keyword extraction with better filtering"""
-        if not text or text.startswith('❌') or text.startswith('⚠️'):
-            return []
-
+    def extract_keywords(self, text: str, max_keywords: int = 10) -> List[str]:
+        """Extract keywords from transcript using simple frequency analysis"""
         try:
-            # Clean and tokenize text
-            words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
+            if not text or text.startswith("Transcription"):
+                return []
             
-            # Enhanced stop words list
+            # Simple keyword extraction
+            words = re.findall(r'\b[a-zA-Z]{4,}\b', text.lower())
+            
+            # Remove common stop words
             stop_words = {
-                'the', 'and', 'to', 'of', 'a', 'in', 'is', 'for', 'on', 'that', 'with', 
-                'as', 'are', 'was', 'will', 'be', 'by', 'at', 'from', 'up', 'about', 
-                'into', 'through', 'during', 'before', 'after', 'above', 'below', 'out', 
-                'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 
-                'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 
-                'few', 'more', 'most', 'other', 'some', 'such', 'only', 'own', 'same', 
-                'so', 'than', 'too', 'very', 'can', 'could', 'should', 'would', 'have', 
-                'has', 'had', 'do', 'does', 'did', 'get', 'got', 'make', 'made', 'take', 
-                'took', 'come', 'came', 'go', 'went', 'see', 'saw', 'know', 'knew', 
-                'think', 'thought', 'say', 'said', 'tell', 'told', 'give', 'gave', 
-                'find', 'found', 'work', 'worked', 'call', 'called', 'try', 'tried',
-                'like', 'just', 'now', 'well', 'also', 'back', 'still', 'way', 'even',
-                'need', 'really', 'thing', 'things', 'people', 'time', 'times', 'year',
-                'years', 'day', 'days', 'good', 'new', 'first', 'last', 'long', 'great',
-                'little', 'right', 'old', 'different', 'small', 'large', 'next', 'early',
-                'young', 'important', 'few', 'public', 'bad', 'same', 'able'
+                'this', 'that', 'with', 'have', 'will', 'from', 'they', 'know',
+                'want', 'been', 'good', 'much', 'some', 'time', 'very', 'when',
+                'come', 'here', 'just', 'like', 'long', 'make', 'many', 'over',
+                'such', 'take', 'than', 'them', 'well', 'were', 'what', 'your'
             }
             
-            # Filter words
-            keywords = [w for w in words if w not in stop_words and len(w) >= 4]
+            filtered_words = [word for word in words if word not in stop_words]
             
-            # Count frequency and get top keywords
-            freq = Counter(keywords)
-            top_keywords = [kw for kw, count in freq.most_common(8) if count >= 1]
+            # Count word frequency
+            word_count = Counter(filtered_words)
             
-            self.logger.info(f"🔑 Extracted {len(top_keywords)} keywords from {len(words)} words")
+            # Get most common words
+            keywords = [word for word, count in word_count.most_common(max_keywords)]
             
-            return top_keywords[:5]  # Return top 5 as originally intended
-
+            self.logger.info(f"🔑 Extracted {len(keywords)} keywords")
+            return keywords
+            
         except Exception as e:
             self.logger.error(f"❌ Keyword extraction failed: {e}")
             return []
 
-    def find_highlight(self, text: str) -> str:
-        """Enhanced highlight detection with multiple criteria"""
-        if not text or text.startswith('❌') or text.startswith('⚠️'):
-            return "No transcript available for highlight detection."
-
+    def find_highlights(self, text: str, max_highlights: int = 3) -> List[str]:
+        """Find potential highlights in the transcript"""
         try:
-            # Split into sentences more intelligently
+            if not text or text.startswith("Transcription"):
+                return []
+            
+            # Split into sentences
             sentences = re.split(r'[.!?]+', text)
-            sentences = [s.strip() for s in sentences if s.strip()]
-
+            sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
+            
             if not sentences:
-                return "No sentences found for highlight detection."
-
-            # Enhanced highlight keywords with weights
-            highlight_patterns = {
-                'importance': ['important', 'crucial', 'critical', 'key', 'essential', 'vital', 'significant'],
-                'exam': ['exam', 'test', 'quiz', 'assessment', 'evaluation', 'grade'],
-                'attention': ['remember', 'note', 'notice', 'pay attention', 'focus', 'highlight'],
-                'emphasis': ['especially', 'particularly', 'specifically', 'notably', 'mainly'],
-                'conclusion': ['conclusion', 'summary', 'in summary', 'to conclude', 'therefore'],
-                'definition': ['definition', 'means', 'defined as', 'refers to', 'is when']
-            }
-
-            # Score sentences based on highlight patterns
+                return []
+            
+            # Simple highlight detection based on sentence length and keywords
+            highlight_indicators = [
+                'important', 'key', 'remember', 'note', 'crucial', 'significant',
+                'main', 'primary', 'essential', 'fundamental', 'critical'
+            ]
+            
             scored_sentences = []
             for sentence in sentences:
-                sentence_lower = sentence.lower()
-                score = 0
+                score = len(sentence)  # Longer sentences might be more detailed
                 
-                for category, patterns in highlight_patterns.items():
-                    for pattern in patterns:
-                        if pattern in sentence_lower:
-                            # Weight different categories
-                            if category in ['importance', 'exam']:
-                                score += 3
-                            elif category in ['attention', 'emphasis']:
-                                score += 2
-                            else:
-                                score += 1
+                # Boost score for highlight indicators
+                for indicator in highlight_indicators:
+                    if indicator in sentence.lower():
+                        score += 100
                 
-                if score > 0:
-                    scored_sentences.append((sentence.strip(), score))
-
-            # Return highest scoring sentence
-            if scored_sentences:
-                best_sentence = max(scored_sentences, key=lambda x: x[1])
-                self.logger.info(f"⭐ Found highlight with score {best_sentence[1]}")
-                return best_sentence[0]
-            else:
-                # Fallback: return first sentence if it's substantial
-                if sentences and len(sentences[0]) > 20:
-                    return sentences[0]
-                return "No specific highlights detected in the recording."
-
+                scored_sentences.append((sentence, score))
+            
+            # Sort by score and take top highlights
+            scored_sentences.sort(key=lambda x: x[1], reverse=True)
+            highlights = [sentence for sentence, score in scored_sentences[:max_highlights]]
+            
+            self.logger.info(f"⭐ Found {len(highlights)} highlights")
+            return highlights
+            
         except Exception as e:
-            self.logger.error(f"❌ Highlight detection failed: {e}")
-            return "Error occurred during highlight detection."
+            self.logger.error(f"❌ Highlight extraction failed: {e}")
+            return []
 
     def cleanup(self):
-        """Enhanced cleanup with comprehensive resource management"""
+        """Comprehensive cleanup of all resources"""
         try:
-            self.logger.info("🧹 Starting cleanup process")
+            self.logger.info("🧹 Starting comprehensive cleanup...")
             
-            # Stop listening
+            # Stop all operations
             self.is_listening = False
+            self.is_recording = False
             self.stop_event.set()
-            
-            # Stop recording if active
-            if self.is_recording:
-                self.is_recording = False
-                time.sleep(0.5)  # Give threads time to notice
             
             # Clean up recording resources
             self._cleanup_recording_resources()
             
-            # Terminate audio system
-            if self.audio:
+            # Clean up PyAudio
+            if hasattr(self, 'audio') and self.audio:
+                self.audio.terminate()
+            
+            # Remove keyboard hooks
+            if self.keyboard_shortcuts_enabled:
                 try:
-                    self.audio.terminate()
-                    self.logger.info("🔊 Audio system terminated")
-                except Exception as e:
-                    self.logger.error(f"❌ Error terminating audio: {e}")
+                    keyboard.unhook_all()
+                    self.logger.info("⌨️ Keyboard hooks removed")
+                except:
+                    pass
             
             self.logger.info("✅ Cleanup completed successfully")
             
         except Exception as e:
-            self.logger.error(f"❌ Error during cleanup: {e}")
+            self.logger.error(f"❌ Cleanup error: {e}")
 
-    def get_system_info(self):
-        """Get system information for debugging"""
+    def run(self):
+        """Main application loop with enhanced control flow"""
         try:
-            info = {
-                'platform': platform.system(),
-                'python_version': platform.python_version(),
-                'opencv_version': cv2.__version__,
-            }
+            # Setup signal handlers for graceful shutdown
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
             
-            # Audio device info
-            if self.audio:
-                info['audio_devices'] = []
-                for i in range(self.audio.get_device_count()):
-                    try:
-                        device_info = self.audio.get_device_info_by_index(i)
-                        if device_info['maxInputChannels'] > 0:
-                            info['audio_devices'].append({
-                                'name': device_info['name'],
-                                'index': i,
-                                'channels': device_info['maxInputChannels']
-                            })
-                    except:
-                        continue
+            print("🚀 Enhanced Voice + Keyboard Activated Lecture Recorder")
+            print("=" * 60)
+            print(f"🎛️ Control Mode: {self.control_mode}")
             
-            self.logger.info(f"💻 System info: {info}")
-            return info
+            if self.keyboard_shortcuts_enabled:
+                self._print_keyboard_shortcuts()
             
+            print("\n🎤 Voice Commands:")
+            print("   ▶️  Start: 'start', 'begin', 'record', 'go'")
+            print("   ⏸️  Pause: 'pause', 'hold', 'wait'")
+            print("   ▶️  Resume: 'resume', 'continue', 'unpause'")
+            print("   ⏹️  Stop: 'stop', 'end', 'finish', 'halt'")
+            print("\n🎯 Ready! Say a command or use keyboard shortcuts...")
+            
+            # Start command listening thread
+            if self.control_mode in ["voice", "both"]:
+                self.command_thread = threading.Thread(target=self.listen_for_commands, daemon=True)
+                self.command_thread.start()
+            
+            # Main loop
+            while self.is_listening and not self.stop_event.is_set():
+                try:
+                    time.sleep(0.1)
+                except KeyboardInterrupt:
+                    break
+            
+        except KeyboardInterrupt:
+            print("\n👋 Shutting down...")
         except Exception as e:
-            self.logger.error(f"❌ Error getting system info: {e}")
-            return {}
+            self.logger.error(f"❌ Application error: {e}")
+            print(f"❌ Application error: {e}")
+        finally:
+            self.cleanup()
+
+    def _signal_handler(self, signum, frame):
+        """Handle system signals for graceful shutdown"""
+        print(f"\n🛑 Received signal {signum}, shutting down gracefully...")
+        self.logger.info(f"🛑 Received signal {signum}")
+        self.is_listening = False
+        self.stop_event.set()
+        if self.is_recording:
+            self.stop_recording()
+
 
 def main():
-    """Enhanced main function with comprehensive error handling"""
-    print("🎙️ Enhanced Voice Command Recorder with Transcription")
-    print("=" * 60)
-    
-    recorder = None
+    """Main entry point with configuration options"""
     try:
+        print("🎬 Initializing Enhanced Voice + Keyboard Lecture Recorder...")
+        
+        # Create and configure recorder
         recorder = VoiceActivatedLectureRecorder()
         
-        # Display system information
-        print("\n💻 System Information:")
-        system_info = recorder.get_system_info()
-        if system_info:
-            print(f"Platform: {system_info.get('platform', 'Unknown')}")
-            print(f"Python: {system_info.get('python_version', 'Unknown')}")
-            print(f"OpenCV: {system_info.get('opencv_version', 'Unknown')}")
-            
-            audio_devices = system_info.get('audio_devices', [])
-            if audio_devices:
-                print(f"Audio Input Devices: {len(audio_devices)} found")
-            else:
-                print("⚠️ No audio input devices detected")
+        # You can customize control mode here:
+        # recorder.control_mode = "voice"     # Voice only
+        # recorder.control_mode = "keyboard"  # Keyboard only
+        # recorder.control_mode = "both"      # Both (default)
         
-        print("\n🚀 Starting voice command listener...")
-        print("📋 Available Commands:")
-        print("   ▶️  Start: 'start', 'begin', 'record', 'go'")
-        print("   ⏹️  Stop: 'stop', 'end', 'finish', 'halt'")
-        print("   🔤 Press 'Q' during recording to quit video")
-        print("   ⌨️  Press Ctrl+C to exit application")
-        print("-" * 60)
-        
-        # Start command listening
-        recorder.listen_for_commands()
+        # Run the application
+        recorder.run()
         
     except KeyboardInterrupt:
-        print("\n🛑 Application interrupted by user")
-        if recorder:
-            recorder.logger.info("🛑 Application interrupted by user (Ctrl+C)")
+        print("\n👋 Application interrupted by user")
     except Exception as e:
-        print(f"\n❌ Fatal error: {e}")
-        if recorder:
-            recorder.logger.error(f"💥 Fatal error: {e}")
-        raise
+        print(f"❌ Application failed to start: {e}")
+        logging.error(f"❌ Application startup failed: {e}")
     finally:
-        if recorder:
-            print("\n🧹 Cleaning up resources...")
-            recorder.cleanup()
-            print("👋 Goodbye!")
+        print("🏁 Application terminated")
+
 
 if __name__ == "__main__":
     main()
