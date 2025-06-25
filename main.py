@@ -26,16 +26,16 @@ def main():
     drive_link = upload_to_drive(video_path)
 
     # Step 4: Send on WhatsApp
-    print("📲 Sending WhatsApp Message...")
+    print("Sending WhatsApp Message...")
     today = datetime.datetime.now().strftime("%B %d")
-    message = f"""🎓 Lecture - {today}
-🔗 Video + Notes: {drive_link}
-🧠 Summary: {summary_text}
-📌 Key Points: {", ".join(keywords) if keywords else "N/A"}
-⭐ Highlight: {highlights if highlights else "None"}"""
+    message = f""" Lecture - {today}
+Video + Notes: {drive_link}
+ Summary: {summary_text}
+ Key Points: {", ".join(keywords) if keywords else "N/A"}
+ Highlight: {highlights if highlights else "None"}"""
 
     send_whatsapp_summary(message)
-    print("✅ All done!")
+    print(" All done!")
 
 if __name__ == "__main__":
     main()
